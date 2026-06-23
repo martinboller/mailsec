@@ -42,6 +42,8 @@ The script will create a CSV file with the following columns:
     tlsa: List of matching TLSA records for all specified SMTP ports
     mta_sts_txt: Well-known MTA-STS TXT file content
 
+If zone is not signed (DNSSEC True) then the  script does not check for mta and tlsa RRs as these require DNSSEC.
+
 ## License
 
 This script is released under the MIT license.
