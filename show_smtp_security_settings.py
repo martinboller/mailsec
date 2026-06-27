@@ -74,7 +74,7 @@ def export_to_html(data, columns, header_row):
             f.write(f"            <td>{item.get('domain', '')}</td>\n")
             for key in columns:
                 val = item.get(key, '')
-                status = bool(val and val != 'Not found')
+                status = bool(val and val != 'False')
                 symbol, cls = ('✓', 'pass') if status else ('✗', 'fail')
                 f.write(f"            <td class='center {cls}'>{symbol}</td>\n")
             f.write("        </tr>\n")
@@ -150,7 +150,7 @@ def export_to_pdf(data, columns, header_row):
         
         for key in columns:
             val = item.get(key, '')
-            status = bool(val and val != 'Not found')
+            status = bool(val and val != 'False')
             
             if status:
                 pdf.set_text_color(46, 204, 113) # Green
@@ -197,7 +197,7 @@ def display_tui(data, stdscr):
                 current_x += 3 
                 
                 value = item.get(key, '')
-                status = bool(value and value != 'Not found')
+                status = bool(value and value != 'False')
                 color_idx, symbol = traffic_lights[status]
                 
                 padded_symbol = f"{symbol:^{column_widths[key]}}"

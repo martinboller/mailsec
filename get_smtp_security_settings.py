@@ -8,21 +8,21 @@ def get_records(domain, record_type):
     try:
         return str(dns.resolver.resolve(domain, record_type)[0])
     except (dns.resolver.NoAnswer, IndexError):  # No answer found or index error during resolution
-        return 'Not found'
+        return 'False'
     except dns.resolver.NXDOMAIN:  # Domain does not exist
-        return 'Not found'
+        return 'False'
 
 # Function to retrieve MTA-STS TXT file content for a given domain
 def get_mta_sts_txt(domain):
     try:
         url = f"https://{domain}/.well-known/mta-sts.txt"  # Construct the URL for MTA-STS TXT record
-        response = requests.get(url)  # Send a GET request to the URL
+        response = requests.get(url, timeout=5)  # Added timeout to prevent hanging
         if response.status_code == 200:  # If response status code is 200 (OK)
-            return str(response.text).strip()  # Return the content of the file, stripped of leading and trailing whitespace
-        else:  # If response status code is not 200 (e.g., 404 Not Found)
-            return "Not found"
+            return str(response.text).strip()  # Return the content of the file
+        else:  # If response status code is not 200
+            return "False"
     except (requests.RequestException, dns.resolver.NXDOMAIN):  # Request exception or domain does not exist
-        return "Not found"
+        return "False"
 
 # Function to check if a given domain is DNSSEC signed by the specified nameserver
 def IsDNSSEC_signed(domain, nameserver):
@@ -34,7 +34,7 @@ def IsDNSSEC_signed(domain, nameserver):
             return True  # Return True indicating that the domain is DNSSEC signed
         else:
             return False  # Return False indicating that the domain is not DNSSEC signed
-    except (dns.resolver.NoAnswer, IndexError):  # No answer found or index error during resolution
+    except (dns.resolver.NoAnswer, IndexError, dns.resolver.NXDOMAIN):  # Added NXDOMAIN to catch missing domains safely
         return False
 
 # Function to retrieve TLSA records for a given domain and nameserver
@@ -48,13 +48,11 @@ def get_tlsa_records(domain, nameserver):
             tlsa_record = str(resolver.resolve(port + domain, 'TLSA')[0])
             tlsa_records.append(tlsa_record)
         except (dns.resolver.NoAnswer, IndexError):
-            return 'Not Found'
-            pass  # No TLSA record found for this port
+            pass  # Removed the abrupt 'return' statement so it loops through all ports
         except dns.resolver.NXDOMAIN:
-            return 'Not found'
-            pass  # Domain does not exist
+            pass
 
-        return tlsa_records 
+    return tlsa_records if tlsa_records else 'False'
  
 # Main function to retrieve and write SMTP security settings for a list of domains to a CSV file
 def get_smtp_records(domains, output_file, local_nameserver):
@@ -65,39 +63,48 @@ def get_smtp_records(domains, output_file, local_nameserver):
 
         for domain in domains:  # Iterate through the list of domains
             try:
-                dnssec = IsDNSSEC_signed(domain, local_nameserver)  # Check if the given domain is DNSSEC signed by the specified nameserver
+                dnssec = IsDNSSEC_signed(domain, local_nameserver)  # Check if the given domain is DNSSEC signed
                 mx_records = dns.resolver.resolve(domain, 'MX')  # Retrieve MX records for the given domain
                 caA = get_records(domain, 'CAA')  # Retrieve CA/A record for the given domain
-                spf = 'Not found'  # Initialize spf variable with default value
+                spf = 'False'  # Initialize spf variable with default value
                 spf_records = dns.resolver.resolve(domain, 'TXT')  # Retrieve TXT records for the given domain
 
                 for record in spf_records:  # Iterate through the list of TXT records
-                    if str(record).lower().startswith('"v=spf'):  # Check if the first character sequence is "v=spf" (case-insensitive)
+                    if str(record).lower().startswith('"v=spf'):  # Check if sequence is "v=spf"
                         spf = str(record)  # Update spf variable with the retrieved SPF record
                         break  # Exit the loop once a matching SPF record is found
 
                 dmarc = get_records('_dmarc.' + domain, 'TXT')  # Retrieve DMARC record for the given domain
   
-                if dnssec == True: # No reason to look for RRs that require zone to be signed
-                    tlsa = get_tlsa_records(domain, local_nameserver)  # Retrieve TLSA records for the given domain
-                    mta_sts = get_records('_mta-sts.' + domain, 'TXT')  # Retrieve MTA-STS record for the given domain
-                    ipv4_mta_sts = get_records('mta-sts.' + domain, 'A')  # Retrieve IPv4 MTA-STS record for the given domain
-                    ipv6_mta_sts = get_records('mta-sts.' + domain, 'AAAA')  # Retrieve IPv6 MTA-STS record for the given domain
-                    mta_report = get_records('_smtp._tls.' + domain, 'TXT')  # Retrieve SMTP report record for the given domain
+                # --- FIX: Define Fallback Defaults Before Using Conditional Logic ---
+                tlsa = 'False'
+                mta_sts = 'False'
+                ipv4_mta_sts = 'False'
+                ipv6_mta_sts = 'False'
+                mta_report = 'False'
+                mta_sts_txt = 'False'
 
-                    if mta_sts:  # If an MTA-STS record is found
-                        mta_sts_txt = get_mta_sts_txt(domain)  # Retrieve MTA-STS TXT file content for the given domain
-                    else:  # If no MTA-STS record is found
-                        mta_sts_txt = 'Not found'
-                else:
-                    tlsa = 'Not found'
+                if dnssec: # Looks up RRs if the zone is signed
+                    tlsa = get_tlsa_records(domain, local_nameserver)  
+                    mta_sts = get_records('_mta-sts.' + domain, 'TXT')  
+                    ipv4_mta_sts = get_records('mta-sts.' + domain, 'A')  
+                    ipv6_mta_sts = get_records('mta-sts.' + domain, 'AAAA')  
+                    mta_report = get_records('_smtp._tls.' + domain, 'TXT')  
+
+                    if mta_sts and mta_sts != 'False':  
+                        mta_sts_txt = get_mta_sts_txt(domain)  
 
                 for record in mx_records:  # Iterate through the list of MX records
-                    writer.writerow({'domain': domain, 'dnssec': dnssec, 'mx': str(record), 'caA': caA, 'spf': spf, 'dmarc': dmarc, 'mta-sts': mta_sts, 'ipv4-mta-sts': ipv4_mta_sts, 'ipv6-mta-sts': ipv6_mta_sts, 'mta-report': mta_report, 'tlsa': get_tlsa_records(domain, local_nameserver), 'mta_sts_txt': mta_sts_txt})  # Write a row to the CSV file with SMTP security settings
+                    writer.writerow({
+                        'domain': domain, 'dnssec': dnssec, 'mx': str(record), 'caA': caA, 'spf': spf, 
+                        'dmarc': dmarc, 'mta-sts': mta_sts, 'ipv4-mta-sts': ipv4_mta_sts, 
+                        'ipv6-mta-sts': ipv6_mta_sts, 'mta-report': mta_report, 'tlsa': tlsa, 
+                        'mta_sts_txt': mta_sts_txt
+                    })
             except dns.resolver.NoAnswer:  # No answer found during resolution
-                writer.writerow({'domain': domain, 'dnssec': 'No', 'mx': 'No MX records found', 'caA': get_records(domain, 'CAA'), 'spf': 'Not found', 'dmarc': 'Not found', 'mta-sts': 'Not found', 'ipv4-mta-sts': 'Not found', 'ipv6-mta-sts': 'Not found', 'mta-report': 'Not found', 'tlsa': get_tlsa_records(domain, local_nameserver), 'mta_sts_txt': 'Not found'})  # Write a row to the CSV file with default values for SMTP security settings
+                writer.writerow({'domain': domain, 'dnssec': 'No', 'mx': 'No MX records found', 'caA': get_records(domain, 'CAA'), 'spf': 'False', 'dmarc': 'False', 'mta-sts': 'False', 'ipv4-mta-sts': 'False', 'ipv6-mta-sts': 'False', 'mta-report': 'False', 'tlsa': 'False', 'mta_sts_txt': 'False'})
             except dns.resolver.NXDOMAIN:  # Domain does not exist
-                writer.writerow({'domain': domain, 'dnssec': 'No', 'mx': 'No MX records found', 'caA': get_records(domain, 'CAA'), 'spf': 'Not found', 'dmarc': 'Not found', 'mta-sts': 'Not found', 'ipv4-mta-sts': 'Not found', 'ipv6-mta-sts': 'Not found', 'mta-report': 'Not found', 'tlsa': get_tlsa_records(domain, local_nameserver), 'mta_sts_txt': 'Not found'})  # Write a row to the CSV file with default values for SMTP security settings
+                writer.writerow({'domain': domain, 'dnssec': 'No', 'mx': 'No MX records found', 'caA': get_records(domain, 'CAA'), 'spf': 'False', 'dmarc': 'False', 'mta-sts': 'False', 'ipv4-mta-sts': 'False', 'ipv6-mta-sts': 'False', 'mta-report': 'False', 'tlsa': 'False', 'mta_sts_txt': 'False'})
 
 # Call the main function with command-line arguments
 if __name__ == "__main__":
