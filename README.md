@@ -23,15 +23,14 @@ The script expects three command-line arguments:
 
 ## Example usage:
 ```bash
-python get_smtp_security_settings.py domains.txt smtp_records.csv 192.0.2.8
+python get_smtp_security_settings.py domains.csv smtp_records.csv 192.0.2.8
 ```
 
-In this example, it reads the list of domains from domains.txt, stores the results in a CSV file named smtp_records.csv, and uses custom DNS nameserver 192.0.2.8
+In this example, it reads the list of domains from domains.csv, stores the results in a CSV file named smtp_records.csv, and uses custom DNS nameserver 192.0.2.8
 
 ### Output
 
 The script will create a CSV file with the following columns:
-
 
     domain
     dnsssec: DNSSEC status (True/False)
@@ -45,17 +44,21 @@ The script will create a CSV file with the following columns:
     tlsa: List of matching TLSA records for all specified SMTP ports
     mta_sts_txt: Well-known MTA-STS TXT file content
 
-If zone is not signed (DNSSEC True) then the  script does not check for mta and tlsa RRs as these require DNSSEC.
 
 ### TUI 
 
-It can interpret the CSV file for you and export to HTML or PDF.
+It can interpret the CSV file for you and provide an overview of the settings for the tested domains and can export to different formats.
 
-![TUI](/images/TUI.png)
 
 ```bash
 python show_smtp_security_settings.py smtp_records.csv
 ```
+
+In this example, it reads the results created with get_smtp_security_settings.py and stored in smtp_records.csv. From there you can either just take a glance at the missing settings or export to either HTML, Hugo Markdown, or PDF.
+
+![TUI](/images/TUI.png)
+
+
 
 ## Explanation of Information retrieved
 

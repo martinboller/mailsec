@@ -1,6 +1,7 @@
 import csv
 import curses
 import sys
+import datetime
 
 # Function to read CSV and return data
 def read_csv(file_path):
@@ -86,7 +87,7 @@ def export_to_html(data, columns, header_row):
         .center { text-align: center; font-weight: bold; }
         .pass { color: #2ecc71; }
         .fail { color: #e74c3c; }
-        </style></head><body><h2>MX Record Status Report</h2><table><tr>""")
+        </style></head><body><h2>SMTP Security Status Report</h2><table><tr>""")
         for col in header_row:
             f.write(f"<th>{col}</th>\n")
         f.write("</tr>\n")
@@ -95,12 +96,9 @@ def export_to_html(data, columns, header_row):
             f.write(f"<td>{item.get('domain', '')}</td>")
             for key in columns:
                 val = item.get(key, '')
-                if key.lower() == 'dnssec':
-                    f.write(f"<td>{val}</td>")
-                else:
-                    status = bool(val and val != 'Not found')
-                    symbol, cls = ('✓', 'pass') if status else ('✗', 'fail')
-                    f.write(f"<td class='center {cls}'>{symbol}</td>")
+                status = bool(val and val != 'False')
+                symbol, cls = ('✓', 'pass') if status else ('✗', 'fail')
+                f.write(f"<td class='center {cls}'>{symbol}</td>")
             f.write("</tr>\n")
         f.write("</table></body></html>")
     return filename
@@ -116,7 +114,7 @@ def export_to_pdf(data, columns, header_row):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page(orientation="L")
     pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 10, "MX Record Status Report", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="L")
+    pdf.cell(0, 10, "SMTP Security Status Report", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="L")
     pdf.ln(4)
 
     usable_width = 275
@@ -143,101 +141,167 @@ def export_to_pdf(data, columns, header_row):
         pdf.cell(pdf_widths['Domain'], 7, domain_text, border=1, align="L")
         for key in columns:
             value = item.get(key, '')
-            if key.lower() == 'dnssec':
-                pdf.cell(pdf_widths[key], 7, f"  {str(value)}", border=1, align="L")
+            status = bool(value and value != 'False')
+            if status:
+                pdf.set_text_color(46, 204, 113)
+                symbol = "Y"
             else:
-                status = bool(value and value != 'Not found')
-                if status:
-                    pdf.set_text_color(46, 204, 113)
-                    symbol = "Y"
-                else:
-                    pdf.set_text_color(231, 76, 60)
-                    symbol = "X"
-                pdf.cell(pdf_widths[key], 7, symbol, border=1, align="C")
-                pdf.set_text_color(0, 0, 0)
+                pdf.set_text_color(231, 76, 60)
+                symbol = "X"
+            pdf.cell(pdf_widths[key], 7, symbol, border=1, align="C")
+            pdf.set_text_color(0, 0, 0)
         pdf.cell(0, 7, "", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.output(filename)
     return filename
 
+import datetime
+
 def export_to_markdown(data, columns, header_row):
     filename = "report.md"
+    
+    # Capture the exact current timestamp in ISO 8601 format with UTC 'Z' marker
+    current_timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    
     with open(filename, "w", encoding="utf-8") as f:
-        f.write("---\ntitle: \"MX Record Status Report\"\ndate: 2026-06-27T10:43:00Z\ndraft: false\n---\n\n")
+        # Hugo Front Matter Configuration with dynamic execution time
+        f.write("---\n")
+        f.write("title: \"SMTP Security Settings Report\"\n")
+        f.write(f"date: {current_timestamp}\n")
+        f.write("draft: false\n")
+        f.write("---\n\n")
+        f.write("## SMTP security settings for scanned domains\n")
+
+        # Render Markdown Table Headers
         f.write("| " + " | ".join(header_row) + " |\n")
+        
+        # Render Markdown Separator alignment row
         separator_row = ["| :--- "] + [" :---: " for _ in columns]
         f.write("|".join(separator_row) + "|\n")
+        
+        # Render Markdown Data Rows (Explicit loop verification)
         for item in data:
-            row_cells = [item.get('domain', '')]
+            row_cells = []
+            # Append the current domain text safely
+            row_cells.append(item.get('domain', ''))
+            
+            # Loop through the security metrics for this specific domain
             for key in columns:
                 val = item.get(key, '')
-                if key.lower() == 'dnssec':
-                    row_cells.append(str(val))
-                else:
-                    status = bool(val and val != 'Not found')
-                    row_cells.append("✓" if status else "✗")
+                status = bool(val and val != 'False')                
+                row_cells.append("✓" if status else "✗")
+                
+            # Write out this complete domain row before moving to the next one
             f.write("| " + " | ".join(row_cells) + " |\n")
+            
+        # Append the Explanations Reference Table
+        f.write("\n\n## DNS Security Controls Reference Dictionary\n\n")
+        f.write("| Field Name | Source / Record Type | Target Format / Values | Purpose & Technical Explanation |\n")
+        f.write("| :--- | :--- | :--- | :--- |\n")
+        f.write("| **domain** | Input Data | String (e.g., `example.com`) | The base domain environment undergoing security analysis. |\n")
+        f.write("| **dnssec** | DNS Cryptographic Check (`DNSKEY`) | `True` or `False` | Confirms whether the domain's DNS zone is cryptographically signed. If `False`, records like TLSA cannot be trusted securely. |\n")
+        f.write("| **mx** | `MX` Record | Text String (Priority + Host) | **Mail Exchanger:** Points to the mail server(s) responsible for accepting inbound email for the domain. |\n")
+        f.write("| **CAA** | `CAA` Record | Text String | **Certification Authority Authorization:** Declares which Certificate Authorities (CAs) are officially allowed to issue SSL/TLS certificates for this domain. |\n")
+        f.write("| **spf** | `TXT` Record (starting with `v=spf1`) | Text String | **Sender Policy Framework:** A hardcoded list of authorized IP addresses and servers allowed to send outbound mail on behalf of the domain to prevent spoofing. |\n")
+        f.write("| **dmarc** | `TXT` Record (`_dmarc.domain`) | Text String | **Domain-based Message Authentication, Reporting, and Conformance:** Tie-breaker policy that instructs receivers what to do (none, quarantine, reject) if SPF or DKIM fails. |\n")
+        f.write("| **mta-sts** | `TXT` Record (`_mta-sts.domain`) | Text String | **MTA Strict Transport Security (DNS):** A signal record containing a policy version and id (timestamp). Tells sending servers that this domain supports and enforces TLS encryption. |\n")
+        f.write("| **ipv4-mta-sts** | `A` Record (`mta-sts.domain`) | IPv4 Address | Resolves the dedicated host serving the MTA-STS policy file via HTTPS to an IPv4 endpoint. |\n")
+        f.write("| **ipv6-mta-sts** | `AAAA` Record (`mta-sts.domain`) | IPv6 Address | Resolves the dedicated host serving the MTA-STS policy file via HTTPS to an IPv6 endpoint. |\n")
+        f.write("| **mta-report** | `TXT` Record (`_smtp._tls.domain`) | Text String | **TLS Reporting (TLS-RPT):** Configures an email address or URI endpoint where sending mail servers can transmit daily diagnostic reports about TLS connection successes or failures. |\n")
+        f.write("| **tlsa** | `TLSA` Records (Ports 25, 465, 587, etc.) | List of Hex Fingerprints | **DANE Protocol:** Pins a specific certificate public key directly to your DNS layer. This prevents Man-in-the-Middle (MitM) attacks by guaranteeing the exact certificate the mail server must use. |\n")
+        f.write("| **mta_sts_txt** | HTTPS Web Fetch (`/.well-known/mta-sts.txt`) | Raw File Contents | **MTA-STS Policy File:** A plaintext file hosted via strict HTTPS that defines your encryption constraints (`enforce`, `testing`, or `none`), specifies valid MX hosts, and sets a max age cache parameter. |\n")
+            
     return filename
 
 # --- Core TUI Layout ---
 def display_tui(data, stdscr):
     columns, header_row, column_widths = calculate_widths(data)
+    
+    # Initialize scrolling variables
+    current_scroll_row = 0
+    stdscr.keypad(True) # Required to capture Up/Down arrow keys correctly
 
     while True:
         stdscr.clear()
         curses.curs_set(0)
+        max_y, max_x = stdscr.getmaxyx()
 
-        # 1. Action Menu Header (Updated with info trigger)
+        # 1. Action Menu Header
         menu_str = " [Q] Quit   [I] Field Info   [H] Export HTML   [P] Export PDF   [M] Export Markdown"
-        stdscr.addstr(0, 0, menu_str, curses.A_REVERSE)
+        stdscr.addstr(0, 0, menu_str[:max_x], curses.A_REVERSE)
 
-        # 2. Format and print Data Headers
+        # Format and print Data Headers
         formatted_header = " | ".join(f"{col:<{column_widths[col]}}" for col in header_row)
-        stdscr.addstr(2, 0, formatted_header, curses.A_BOLD)
+        stdscr.addstr(2, 0, formatted_header[:max_x], curses.A_BOLD)
 
-        # 3. Format and print the Data Rows
-        row = 3
-        for item in data:
+        # Calculate workspace dimensions
+        header_height = 3
+        # Max rows available on screen for data items
+        visible_data_rows = max_y - header_height - 1 
+
+        # Slice the dataset to fit within the current window offset viewport
+        visible_items = data[current_scroll_row : current_scroll_row + visible_data_rows]
+
+        # 3. Format and print the visible Data Rows
+        row = header_height
+        for item in visible_items:
+            if row >= max_y - 1:
+                break
+
             domain_val = item.get('domain', '')
             stdscr.addstr(row, 0, f"{domain_val:<{column_widths['Domain']}}")
             current_x = column_widths['Domain']
 
             for key in columns:
+                if current_x + 3 >= max_x:
+                    break
                 stdscr.addstr(row, current_x, " | ")
                 current_x += 3 
                 
                 value = item.get(key, '')
-                if key.lower() == 'dnssec':
-                    padded_val = f"{str(value):<{column_widths[key]}}"
-                    stdscr.addstr(row, current_x, padded_val)
-                    current_x += column_widths[key]
-                else:
-                    status = bool(value and value != 'Not found')
-                    color_idx, symbol = traffic_lights[status]
-                    padded_symbol = f"{symbol:^{column_widths[key]}}"
-                    stdscr.addstr(row, current_x, padded_symbol, curses.color_pair(color_idx))
-                    current_x += column_widths[key]
+                
+                # Normalize boolean check for uniform checkmark rendering
+                status = bool(value and value != 'False')
+                    
+                if current_x + column_widths[key] >= max_x:
+                    break
+                    
+                color_idx, symbol = traffic_lights[status]
+                padded_symbol = f"{symbol:^{column_widths[key]}}"
+                stdscr.addstr(row, current_x, padded_symbol, curses.color_pair(color_idx))
+                current_x += column_widths[key]
             row += 1
 
-        stdscr.refresh()
-
-        # 4. Input Listener loop
+        # Safe scrolling indicator bar (Using row index 1 to completely avoid the bottom-right crash zone)
+        if len(data) > visible_data_rows and visible_data_rows > 0:
+            indicator = f"Showing rows {current_scroll_row + 1}-{min(current_scroll_row + visible_data_rows, len(data))} of {len(data)} (Use arrows/j/k to scroll)"
+            stdscr.addstr(1, 0, indicator[:max_x], curses.A_DIM)
+        # 5. Interactive Navigation Input Listener
         ch = stdscr.getch()
+        
         if ch in (ord('q'), ord('Q')):
             break
         elif ch in (ord('i'), ord('I')):
             show_info_screen(stdscr)
         elif ch in (ord('h'), ord('H')):
             outfile = export_to_html(data, columns, header_row)
-            stdscr.addstr(row + 1, 0, f"Exported successfully to {outfile}! Press any key...", curses.A_BLINK)
+            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}! Key...", curses.A_BLINK)
             stdscr.getch()
         elif ch in (ord('p'), ord('P')):
             outfile = export_to_pdf(data, columns, header_row)
-            stdscr.addstr(row + 1, 0, f"Exported successfully to {outfile}! Press any key...", curses.A_BLINK)
+            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}! Key...", curses.A_BLINK)
             stdscr.getch()
         elif ch in (ord('m'), ord('M')):
             outfile = export_to_markdown(data, columns, header_row)
-            stdscr.addstr(row + 1, 0, f"Exported successfully to {outfile}! Press any key...", curses.A_BLINK)
+            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}! Key...", curses.A_BLINK)
             stdscr.getch()
+            
+        # Scroll controls: Arrow keys or Vim keybindings (j=down, k=up)
+        elif ch in (curses.KEY_DOWN, ord('j'), ord('J')):
+            if current_scroll_row < len(data) - visible_data_rows:
+                current_scroll_row += 1
+        elif ch in (curses.KEY_UP, ord('k'), ord('K')):
+            if current_scroll_row > 0:
+                current_scroll_row -= 1
 
 def main():
     if len(sys.argv) < 2:
@@ -245,9 +309,21 @@ def main():
         sys.exit(1)
 
     csv_file_path = sys.argv[1]
-    data = read_csv(csv_file_path)
+    raw_data = read_csv(csv_file_path)
 
-    if not data: return
+    if not raw_data: 
+        return
+
+    # --- DEDUPLICATION LOGIC ---
+    # Keep only the very first instance of each domain
+    seen_domains = set()
+    data = []
+    for item in raw_data:
+        domain = item.get('domain', '').strip().lower()
+        if domain not in seen_domains:
+            seen_domains.add(domain)
+            data.append(item)
+    # ----------------------------
 
     def curses_main(stdscr):
         if curses.has_colors():
