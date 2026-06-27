@@ -9,6 +9,9 @@ Looks up: MX records, CAA records, SPF records, DMARC records, MTA-STS records, 
     Python 3.x
     dnspython library (pip install dnspython)
     requests library (pip install requests)
+    
+    for the show_smtp_security_settings.py script:
+    fpdf2 library (pip install fpdf2)
 
 ## Usage
 
@@ -43,6 +46,16 @@ The script will create a CSV file with the following columns:
     mta_sts_txt: Well-known MTA-STS TXT file content
 
 If zone is not signed (DNSSEC True) then the  script does not check for mta and tlsa RRs as these require DNSSEC.
+
+### TUI 
+
+It can interpret the CSV file for you and export to HTML or PDF.
+
+![TUI](/images/TUI.png)
+
+```bash
+python show_smtp_security_settings.py smtp_records.csv
+```
 
 ## License
 
