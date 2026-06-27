@@ -57,6 +57,24 @@ It can interpret the CSV file for you and export to HTML or PDF.
 python show_smtp_security_settings.py smtp_records.csv
 ```
 
+## Explanation of Information retrieved
+
+| Field Name | Source / Record Type | Target Format / Values | Purpose & Technical Explanation |
+| :--- | :--- | :--- | :--- |
+| **domain** | Input Data | String (e.g., `example.com`) | The base domain environment undergoing security analysis. |
+| **dnssec** | DNS Cryptographic Check (`DNSKEY`) | `True` or `False` | Confirms whether the domain's DNS zone is cryptographically signed. If `False`, records like TLSA cannot be trusted securely. |
+| **mx** | `MX` Record | Text String (Priority + Host) | **Mail Exchanger:** Points to the mail server(s) responsible for accepting inbound email for the domain. |
+| **CAA** | `CAA` Record | Text String | **Certification Authority Authorization:** Declares which Certificate Authorities (CAs) are officially allowed to issue SSL/TLS certificates for this domain. |
+| **spf** | `TXT` Record (starting with `v=spf1`) | Text String | **Sender Policy Framework:** A hardcoded list of authorized IP addresses and servers allowed to send outbound mail on behalf of the domain to prevent spoofing. |
+| **dmarc** | `TXT` Record (`_dmarc.domain`) | Text String | **Domain-based Message Authentication, Reporting, and Conformance:** Tie-breaker policy that instructs receivers what to do (none, quarantine, reject) if SPF or DKIM fails. |
+| **mta-sts** | `TXT` Record (`_mta-sts.domain`) | Text String | **MTA Strict Transport Security (DNS):** A signal record containing a policy version and id (timestamp). Tells sending servers that this domain supports and enforces TLS encryption. |
+| **ipv4-mta-sts** | `A` Record (`mta-sts.domain`) | IPv4 Address | Resolves the dedicated host serving the MTA-STS policy file via HTTPS to an IPv4 endpoint. |
+| **ipv6-mta-sts** | `AAAA` Record (`mta-sts.domain`) | IPv6 Address | Resolves the dedicated host serving the MTA-STS policy file via HTTPS to an IPv6 endpoint. |
+| **mta-report** | `TXT` Record (`_smtp._tls.domain`) | Text String | **TLS Reporting (TLS-RPT):** Configures an email address or URI endpoint where sending mail servers can transmit daily diagnostic reports about TLS connection successes or failures. |
+| **tlsa** | `TLSA` Records (Ports 25, 465, 587, etc.) | List of Hex Fingerprints | **DANE Protocol:** Pins a specific certificate public key directly to your DNS layer. This prevents Man-in-the-Middle (MitM) attacks by guaranteeing the exact certificate the mail server must use. |
+| **mta_sts_txt** | HTTPS Web Fetch (`/.well-known/mta-sts.txt`) | Raw File Contents | **MTA-STS Policy File:** A plaintext file hosted via strict HTTPS that defines your encryption constraints (`enforce`, `testing`, or `none`), specifies valid MX hosts, and sets a max age cache parameter. |
+
+
 ## License
 
 This script is released under the MIT license.
