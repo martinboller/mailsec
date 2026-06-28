@@ -1,16 +1,36 @@
 import requests
 import dns.resolver
 import dns.flags
+import dns.exception
 import csv
 import sys
 
+# Read nameserver from command line arguments
+# Wrap it in a list because dnspython expects an iterable of IP strings
+
+try:
+    local_nameserver = [sys.argv[3]]
+except IndexError:
+    # Fallback or error handling if the argument is missing
+    print("Error: Missing nameserver argument (sys.argv[3])")
+    sys.exit(1)
+
+DNS_TIMEOUT = 2.0 # Bumped slightly to prevent false negatives on slow networks but still somewhat snappy
+
 # Function to retrieve DNS records for a given domain and record type
 def get_records(domain, record_type):
+    #  use global 'local_nameserver'
+    resolver = dns.resolver.Resolver(configure=False)
+    resolver.nameservers = local_nameserver    
+    resolver.lifetime = DNS_TIMEOUT
+
     try:
-        return str(dns.resolver.resolve(domain, record_type)[0])
-    except (dns.resolver.NoAnswer, IndexError):  # No answer found or index error during resolution
+        answers = resolver.resolve(domain, record_type)
+        return str(answers[0]) if answers else 'False'
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, IndexError):
         return 'False'
-    except dns.resolver.NXDOMAIN:  # Domain does not exist
+    except (dns.resolver.NoNameservers, dns.exception.Timeout):
+        # This catches the SERVFAIL crash you are experiencing
         return 'False'
 
 # Function to retrieve MTA-STS TXT file content for a given domain
@@ -19,7 +39,7 @@ def get_mta_sts_txt(domain):
         url = f"https://{domain}/.well-known/mta-sts.txt"  # Construct the URL for MTA-STS TXT record
         response = requests.get(url, timeout=5)  # Added timeout to prevent hanging
         if response.status_code == 200:  # If response status code is 200 (OK)
-            return str(response.text).strip()  # Return the content of the file
+            return str(response.text).strip()[:75]  # Return the content of the file, but limit to 75 chars
         else:  # If response status code is not 200
             return "False"
     except (requests.RequestException, dns.resolver.NXDOMAIN):  # Request exception or domain does not exist
@@ -28,8 +48,10 @@ def get_mta_sts_txt(domain):
 # Function to check if a given domain is DNSSEC signed by the specified nameserver
 def IsDNSSEC_signed(domain, nameserver):
     resolver = dns.resolver.Resolver()
-    resolver.nameservers = nameserver if isinstance(nameserver, list) else [nameserver]
-    resolver.lifetime = 3.0  # Bumped slightly to prevent false negatives on slow networks
+    # Use global 'local_nameserver'
+    resolver = dns.resolver.Resolver(configure=False)
+    resolver.nameservers = local_nameserver
+    resolver.lifetime = DNS_TIMEOUT
     
     # CRITICAL: Tell the resolver to request DNSSEC data (sets the DO bit)
     resolver.use_edns(0, ednsflags=dns.flags.DO)
@@ -52,24 +74,31 @@ def IsDNSSEC_signed(domain, nameserver):
     return False
 
 # Function to retrieve TLSA records for a given domain and nameserver
+import dns.resolver
+import dns.exception
+
 def get_tlsa_records(domain, nameserver):
-    resolver = dns.resolver.Resolver()
+    # configure=False prevents reading local /etc/resolv.conf (localhost fallback)
+    resolver = dns.resolver.Resolver(configure=False)
     resolver.nameservers = nameserver
+    resolver.lifetime = DNS_TIMEOUT
 
     tlsa_records = []
     for port in ['_25._tcp.', '_465._tcp.', '_587._tcp.', '_993._tcp.', '_995._tcp.']:
         try:
-            tlsa_record = str(resolver.resolve(port + domain, 'TLSA')[0])
-            tlsa_records.append(tlsa_record)
-        except (dns.resolver.NoAnswer, IndexError):
-            pass  # Removed the abrupt 'return' statement so it loops through all ports
-        except dns.resolver.NXDOMAIN:
+            answers = resolver.resolve(port + domain, 'TLSA')
+            if answers:
+                tlsa_records.append(str(answers[0]))
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, IndexError):
+            pass
+        except (dns.resolver.NoNameservers, dns.exception.Timeout):
+            # Catches SERVFAIL, REFUSED, and dead nameservers without crashing
             pass
 
     return tlsa_records if tlsa_records else 'False'
  
 # Main function to retrieve and write SMTP security settings for a list of domains to a CSV file
-def get_smtp_records(domains, output_file, local_nameserver):
+def get_smtp_records(domains, output_file):
 
     with open(output_file, 'w', newline='') as csvfile:  # Open the output CSV file in write mode
         fieldnames = ['domain', 'dnssec', 'mx', 'caA', 'spf', 'dmarc', 'mta-sts', 'ipv4-mta-sts', 'ipv6-mta-sts', 'mta-report', 'tlsa', 'mta_sts_txt']  # Define the CSV field names
@@ -84,15 +113,23 @@ def get_smtp_records(domains, output_file, local_nameserver):
             sys.stdout.flush()
  
             try:
+                # Define Fallback Defaults Before Using Conditional Logic ---
+                tlsa = 'False'
+                mta_sts = 'False'
+                ipv4_mta_sts = 'False'
+                ipv6_mta_sts = 'False'
+                mta_report = 'False'
+                mta_sts_txt = 'False'
                 dnssec = False
+                spf = 'False'  # Initialize spf variable with default value
+
                 dnssec = IsDNSSEC_signed(domain, local_nameserver)  # Check if the given domain is DNSSEC signed
-                mx_records = dns.resolver.resolve(domain, 'MX')  # Retrieve MX records for the given domain
+                mx_records = get_records(domain, 'MX') #dns.resolver.resolve(domain, 'MX')  # Retrieve MX records for the given domain
                 caA = get_records(domain, 'CAA')  # Retrieve CA/A record             try:
                 #dnssec = IsDNSSEC_signed(domain, local_nameserver)  # Check if the given domain is DNSSEC signed
-                mx_records = dns.resolver.resolve(domain, 'MX')  # Retrieve MX records for the given domain
-                caA = get_records(domain, 'CAA')  # Retrieve CA/A record for the given domain
-                spf = 'False'  # Initialize spf variable with default value
-                spf_records = dns.resolver.resolve(domain, 'TXT')  # Retrieve TXT records for the given domain
+                #mx_records = dns.resolver.resolve(domain, 'MX')  # Retrieve MX records for the given domain
+                #caA = get_records(domain, 'CAA')  # Retrieve CA/A record for the given domain
+                spf_records = get_records(domain, 'TXT')  # Retrieve TXT records for the given domain
 
                 for record in spf_records:  # Iterate through the list of TXT records
                     if str(record).lower().startswith('"v=spf'):  # Check if sequence is "v=spf"
@@ -101,14 +138,6 @@ def get_smtp_records(domains, output_file, local_nameserver):
 
                 dmarc = get_records('_dmarc.' + domain, 'TXT')  # Retrieve DMARC record for the given domain
   
-                # --- FIX: Define Fallback Defaults Before Using Conditional Logic ---
-                tlsa = 'False'
-                mta_sts = 'False'
-                ipv4_mta_sts = 'False'
-                ipv6_mta_sts = 'False'
-                mta_report = 'False'
-                mta_sts_txt = 'False'
-
                 tlsa = get_tlsa_records(domain, local_nameserver)  
                 mta_sts = get_records('_mta-sts.' + domain, 'TXT')  
                 ipv4_mta_sts = get_records('mta-sts.' + domain, 'A')  
@@ -118,9 +147,9 @@ def get_smtp_records(domains, output_file, local_nameserver):
                 if mta_sts and mta_sts != 'False':  
                     mta_sts_txt = get_mta_sts_txt(domain)  
 
-                for record in mx_records:  # Iterate through the list of MX records
+                if mx_records and mx_records != 'False':  # If MX record exist as it doesn't make sense to write records without
                     writer.writerow({
-                        'domain': domain, 'dnssec': dnssec, 'mx': str(record), 'caA': caA, 'spf': spf, 
+                        'domain': domain, 'dnssec': dnssec, 'mx': mx_records, 'caA': caA, 'spf': spf, 
                         'dmarc': dmarc, 'mta-sts': mta_sts, 'ipv4-mta-sts': ipv4_mta_sts, 
                         'ipv6-mta-sts': ipv6_mta_sts, 'mta-report': mta_report, 'tlsa': tlsa, 
                         'mta_sts_txt': mta_sts_txt
@@ -143,4 +172,4 @@ if __name__ == "__main__":
     output_file = sys.argv[2]
     local_nameserver = [sys.argv[3]]
 
-    get_smtp_records(domains, output_file, local_nameserver)
+    get_smtp_records(domains, output_file)

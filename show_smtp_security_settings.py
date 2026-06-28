@@ -2,6 +2,10 @@ import csv
 import curses
 import sys
 import datetime
+import os
+# Get the exact directory where your script lives
+script_dir = os.path.dirname(os.path.abspath(__file__))
+log_path = os.path.join(script_dir, "dns_debug.log")
 
 # Function to read CSV and return data
 def read_csv(file_path):
@@ -185,9 +189,32 @@ def export_to_markdown(data, columns, header_row):
             row_cells.append(item.get('domain', ''))
             
             # Loop through the security metrics for this specific domain
+            # Debug 
+            is_ravendo = any("ravendo" in str(v).lower() for v in item.values()) or "ravendo.dk" in str(item.values())
+
             for key in columns:
                 val = item.get(key, '')
-                status = bool(val and val != 'False')                
+                val_str = str(val).strip()
+                is_null_mx = val_str == '0 .' or val_str == '.'
+                status = bool(val_str) and val_str.lower() not in ['False', ''] and not is_null_mx
+                # If it's Ravendo, FORCE print directly to your terminal screen
+                # This bypasses all file write/path bugs completely
+                if is_ravendo:
+                    print(f"\n!!! SCREEN DEBUG FOR RAVENDO !!!")
+                    print(f"Column Key    : '{key}'")
+                    print(f"Value Found   : '{val_str}'")
+                    print(f"Status Result : {status}")
+                    print(f"Symbol Used   : {'✓' if status else '✗'}")
+
+                if not status:
+                    try:
+                        with open(log_path, "a", encoding="utf-8") as f:
+                            f.write(f"--- FAILED CHECK FOR DOMAIN/KEY ---\n")
+                            f.write(f"Key used for lookup : '{key}'\n")
+                            f.write(f"Stringified Value   : '{val_str}'\n\n")
+                    except Exception as e:
+                        print(f"Could not write log file: {e}")
+
                 row_cells.append("✓" if status else "✗")
                 
             # Write out this complete domain row before moving to the next one
@@ -225,7 +252,7 @@ def display_tui(data, stdscr):
         curses.curs_set(0)
         max_y, max_x = stdscr.getmaxyx()
 
-        # 1. Action Menu Header
+        # Action Menu Header
         menu_str = " [Q] Quit   [I] Field Info   [H] Export HTML   [P] Export PDF   [M] Export Markdown"
         stdscr.addstr(0, 0, menu_str[:max_x], curses.A_REVERSE)
 
@@ -241,7 +268,7 @@ def display_tui(data, stdscr):
         # Slice the dataset to fit within the current window offset viewport
         visible_items = data[current_scroll_row : current_scroll_row + visible_data_rows]
 
-        # 3. Format and print the visible Data Rows
+        # Format and print the visible Data Rows
         row = header_height
         for item in visible_items:
             if row >= max_y - 1:
@@ -255,12 +282,18 @@ def display_tui(data, stdscr):
                 if current_x + 3 >= max_x:
                     break
                 stdscr.addstr(row, current_x, " | ")
-                current_x += 3 
+                current_x += 3               
                 
+                # --- FIXED DATA RETRIEVAL & NORMALIZATION ---
                 value = item.get(key, '')
+                val_str = str(value).strip()
                 
-                # Normalize boolean check for uniform checkmark rendering
-                status = bool(value and value != 'False')
+                # Check for RFC 7505 Null MX record ("0 .")
+                is_null_mx = val_str == '0 .' or val_str == '.'
+                
+                # Robust validation logic matching your HTML export
+                status = bool(val_str) and val_str.lower() not in ['false', ''] and not is_null_mx
+                # --------------------------------------------
                     
                 if current_x + column_widths[key] >= max_x:
                     break
@@ -275,6 +308,7 @@ def display_tui(data, stdscr):
         if len(data) > visible_data_rows and visible_data_rows > 0:
             indicator = f"Showing rows {current_scroll_row + 1}-{min(current_scroll_row + visible_data_rows, len(data))} of {len(data)} (Use arrows/j/k to scroll)"
             stdscr.addstr(1, 0, indicator[:max_x], curses.A_DIM)
+            
         # 5. Interactive Navigation Input Listener
         ch = stdscr.getch()
         
