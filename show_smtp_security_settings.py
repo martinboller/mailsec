@@ -188,33 +188,11 @@ def export_to_markdown(data, columns, header_row):
             # Append the current domain text safely
             row_cells.append(item.get('domain', ''))
             
-            # Loop through the security metrics for this specific domain
-            # Debug 
-            is_ravendo = any("ravendo" in str(v).lower() for v in item.values()) or "ravendo.dk" in str(item.values())
-
             for key in columns:
                 val = item.get(key, '')
                 val_str = str(val).strip()
                 is_null_mx = val_str == '0 .' or val_str == '.'
                 status = bool(val_str) and val_str.lower() not in ['False', ''] and not is_null_mx
-                # If it's Ravendo, FORCE print directly to your terminal screen
-                # This bypasses all file write/path bugs completely
-                if is_ravendo:
-                    print(f"\n!!! SCREEN DEBUG FOR RAVENDO !!!")
-                    print(f"Column Key    : '{key}'")
-                    print(f"Value Found   : '{val_str}'")
-                    print(f"Status Result : {status}")
-                    print(f"Symbol Used   : {'✓' if status else '✗'}")
-
-                if not status:
-                    try:
-                        with open(log_path, "a", encoding="utf-8") as f:
-                            f.write(f"--- FAILED CHECK FOR DOMAIN/KEY ---\n")
-                            f.write(f"Key used for lookup : '{key}'\n")
-                            f.write(f"Stringified Value   : '{val_str}'\n\n")
-                    except Exception as e:
-                        print(f"Could not write log file: {e}")
-
                 row_cells.append("✓" if status else "✗")
                 
             # Write out this complete domain row before moving to the next one
@@ -284,16 +262,15 @@ def display_tui(data, stdscr):
                 stdscr.addstr(row, current_x, " | ")
                 current_x += 3               
                 
-                # --- FIXED DATA RETRIEVAL & NORMALIZATION ---
+                # DATA RETRIEVAL & NORMALIZATION
                 value = item.get(key, '')
                 val_str = str(value).strip()
                 
                 # Check for RFC 7505 Null MX record ("0 .")
                 is_null_mx = val_str == '0 .' or val_str == '.'
                 
-                # Robust validation logic matching your HTML export
+                # Robust validation 
                 status = bool(val_str) and val_str.lower() not in ['false', ''] and not is_null_mx
-                # --------------------------------------------
                     
                 if current_x + column_widths[key] >= max_x:
                     break
