@@ -207,8 +207,7 @@ def export_to_markdown(data, columns, header_row):
             for key in columns:
                 val = item.get(key, '')
                 val_str = str(val).strip()
-                is_null_mx = val_str == '0 .' or val_str == '.'
-                status = bool(val_str) and val_str.lower() not in ['False', ''] and not is_null_mx
+                status = bool(val and val != 'False')
                 row_cells.append("✓" if status else "✗")
                 
             # Write out this complete domain row before moving to the next one
