@@ -86,7 +86,6 @@ def get_smtp_records(domains, output_file, local_nameserver):
             try:
                 dnssec = False
                 dnssec = IsDNSSEC_signed(domain, local_nameserver)  # Check if the given domain is DNSSEC signed
-                print(dnssec)
                 mx_records = dns.resolver.resolve(domain, 'MX')  # Retrieve MX records for the given domain
                 caA = get_records(domain, 'CAA')  # Retrieve CA/A record             try:
                 #dnssec = IsDNSSEC_signed(domain, local_nameserver)  # Check if the given domain is DNSSEC signed
