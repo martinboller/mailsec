@@ -27,6 +27,21 @@ def get_records(domain, record_type):
     try:
         answers = resolver.resolve(domain, record_type)
         return str(answers[0]) if answers else 'False'
+    
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, IndexError):
+        return 'False'
+    except (dns.resolver.NoNameservers, dns.exception.Timeout):
+        # This catches the SERVFAIL crash you are experiencing
+        return 'False'
+
+def get_spf_records(domain, record_type):
+    try:
+        # Run the DNS query
+        answers = dns.resolver.resolve(domain, record_type)
+        
+        # Pull ALL records found in the RRset answer section
+        return [str(rdata) for rdata in answers]
+        
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, IndexError):
         return 'False'
     except (dns.resolver.NoNameservers, dns.exception.Timeout):
@@ -101,7 +116,7 @@ def get_tlsa_records(domain, nameserver):
 def get_smtp_records(domains, output_file):
 
     with open(output_file, 'w', newline='') as csvfile:  # Open the output CSV file in write mode
-        fieldnames = ['domain', 'dnssec', 'mx', 'caA', 'spf', 'dmarc', 'mta-sts', 'ipv4-mta-sts', 'ipv6-mta-sts', 'mta-report', 'tlsa', 'mta_sts_txt']  # Define the CSV field names
+        fieldnames = ['domain', 'dnssec', 'mx', 'caa', 'spf', 'dmarc', 'mta-sts', 'ipv4-mta-sts', 'ipv6-mta-sts', 'mta-report', 'tlsa', 'mta_sts_txt']  # Define the CSV field names
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)  # Create a CSV writer object with the defined field names
         writer.writeheader()  # Write header row to the CSV file
         total_domains = len(domains)
@@ -113,7 +128,7 @@ def get_smtp_records(domains, output_file):
             sys.stdout.flush()
  
             try:
-                # Define Fallback Defaults Before Using Conditional Logic ---
+                # Define Fallback Defaults Before Using Conditional Logic
                 tlsa = 'False'
                 mta_sts = 'False'
                 ipv4_mta_sts = 'False'
@@ -123,43 +138,40 @@ def get_smtp_records(domains, output_file):
                 dnssec = False
                 spf = 'False'  # Initialize spf variable with default value
 
+                # Retrieve all the records
                 dnssec = IsDNSSEC_signed(domain, local_nameserver)  # Check if the given domain is DNSSEC signed
                 mx_records = get_records(domain, 'MX') #dns.resolver.resolve(domain, 'MX')  # Retrieve MX records for the given domain
-                caA = get_records(domain, 'CAA')  # Retrieve CA/A record             try:
-                #dnssec = IsDNSSEC_signed(domain, local_nameserver)  # Check if the given domain is DNSSEC signed
-                #mx_records = dns.resolver.resolve(domain, 'MX')  # Retrieve MX records for the given domain
-                #caA = get_records(domain, 'CAA')  # Retrieve CA/A record for the given domain
-                spf_records = get_records(domain, 'TXT')  # Retrieve TXT records for the given domain
-
-                for record in spf_records:  # Iterate through the list of TXT records
-                    if str(record).lower().startswith('"v=spf'):  # Check if sequence is "v=spf"
-                        spf = str(record)  # Update spf variable with the retrieved SPF record
-                        break  # Exit the loop once a matching SPF record is found
-
-                dmarc = get_records('_dmarc.' + domain, 'TXT')  # Retrieve DMARC record for the given domain
-  
+                caa = get_records(domain, 'CAA')  # Retrieve CA/A record
+                dmarc = get_records('_dmarc.' + domain, 'TXT')  # Retrieve DMARC record for the given domain  
                 tlsa = get_tlsa_records(domain, local_nameserver)  
                 mta_sts = get_records('_mta-sts.' + domain, 'TXT')  
                 ipv4_mta_sts = get_records('mta-sts.' + domain, 'A')  
                 ipv6_mta_sts = get_records('mta-sts.' + domain, 'AAAA')  
                 mta_report = get_records('_smtp._tls.' + domain, 'TXT')  
 
-                if mta_sts and mta_sts != 'False':  
+                # spf is a special case as it is just one amongst potentially many TXT RRs
+                spf_records = get_spf_records(domain, 'TXT')  # Retrieve TXT records for the given domain
+                for record in spf_records:  # Iterate through the list of TXT records
+                    cleaned_record = record.lower().strip().strip('"').strip("'")
+
+                    if cleaned_record.startswith('v=spf'):
+                        spf = record  # Grab the original string match
+                        break         # Stop iterating when spf record found
+            
+                if mta_sts and mta_sts != 'False':
                     mta_sts_txt = get_mta_sts_txt(domain)  
 
-                if mx_records and mx_records != 'False':  # If MX record exist as it doesn't make sense to write records without
+                if mx_records and mx_records != 'False':  # Check MX record exist as it doesn't make sense to write records without
                     writer.writerow({
-                        'domain': domain, 'dnssec': dnssec, 'mx': mx_records, 'caA': caA, 'spf': spf, 
+                        'domain': domain, 'dnssec': dnssec, 'mx': mx_records, 'caa': caa, 'spf': spf, 
                         'dmarc': dmarc, 'mta-sts': mta_sts, 'ipv4-mta-sts': ipv4_mta_sts, 
                         'ipv6-mta-sts': ipv6_mta_sts, 'mta-report': mta_report, 'tlsa': tlsa, 
                         'mta_sts_txt': mta_sts_txt
                     })
             except dns.resolver.NoAnswer:  # No answer found during resolution
                 pass
-                #writer.writerow({'domain': domain, 'dnssec': 'False', 'mx': 'No MX records found', 'caA': get_records(domain, 'CAA'), 'spf': 'False', 'dmarc': 'False', 'mta-sts': 'False', 'ipv4-mta-sts': 'False', 'ipv6-mta-sts': 'False', 'mta-report': 'False', 'tlsa': 'False', 'mta_sts_txt': 'False'})
             except dns.resolver.NXDOMAIN:  # Domain does not exist
                 pass
-                #writer.writerow({'domain': domain, 'dnssec': 'False', 'mx': 'No MX records found', 'caA': get_records(domain, 'CAA'), 'spf': 'False', 'dmarc': 'False', 'mta-sts': 'False', 'ipv4-mta-sts': 'False', 'ipv6-mta-sts': 'False', 'mta-report': 'False', 'tlsa': 'False', 'mta_sts_txt': 'False'})
         sys.stdout.write(f"\r\n\nFinished retrieving data for {total_domains} Domains...\n\n")
 
 # Call the main function with command-line arguments

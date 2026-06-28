@@ -8,6 +8,8 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 log_path = os.path.join(script_dir, "dns_debug.log")
 
 REPORTS_DIR = "Reports"
+PREFERRED_ORDER = ['Domain', 'dnssec', 'tlsa', 'spf', 'dmarc', 'mx', 'caa', 'mta-report', 'mta-sts', 'mta_sts_txt', 'ipv4-mta-sts', 'ipv6-mta-sts' ]
+
 # Function to read CSV and return data
 def read_csv(file_path):
     try:
@@ -55,7 +57,7 @@ def show_info_screen(stdscr):
         ("domain", "Input Data", "Base domain undergoing security analysis from the csv file with domains"),
         ("dnssec", "DNSKEY", "Confirms if zone is signed (True/False). If False, TLSA and MTA-STS is untrusted."),
         ("mx", "MX Record", "Mail Exchanger: Points to servers handling inbound mail."),
-        ("caA", "CAA Record", "Declares which Certificate Authorities may issue TLS certs."),
+        ("caa", "CAA Record", "Declares which Certificate Authorities may issue TLS certs."),
         ("spf", "TXT Record", "Sender Policy Framework: Lists IPs authorized to send mail."),
         ("dmarc", "TXT Record", "Policy instructing receivers what to do if SPF or DKIM fails."),
         ("mta-sts", "TXT Record", "Signals that the domain supports and enforces TLS encryption."),
@@ -87,6 +89,10 @@ def export_to_html(data, columns, header_row):
     name_without_ext = os.path.splitext(base_name)[0]
     filename = os.path.join(REPORTS_DIR, f"{name_without_ext}.html")
     os.makedirs(REPORTS_DIR, exist_ok=True)
+     
+    # Filter preferred order to only include columns that are active in this dataset
+    ordered_columns = [col for col in PREFERRED_ORDER if col in columns]
+    
     with open(filename, "w", encoding="utf-8") as f:
         f.write("""<!DOCTYPE html><html><head><style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f9f9f9; }
@@ -98,18 +104,30 @@ def export_to_html(data, columns, header_row):
         .pass { color: #2ecc71; }
         .fail { color: #e74c3c; }
         </style></head><body><h2>SMTP Security Status Report</h2><table><tr>""")
-        for col in header_row:
+        
+        # Write the static Domain header first
+        f.write("<th>Domain</th>\n")
+        
+        # Write the rest of the headers in your preferred order
+        for col in ordered_columns:
             f.write(f"<th>{col}</th>\n")
         f.write("</tr>\n")
+        
+        # Write data rows matching the same preferred order
         for item in data:
             f.write("<tr>")
             f.write(f"<td>{item.get('domain', '')}</td>")
-            for key in columns:
+            
+            for key in ordered_columns:
                 val = item.get(key, '')
+                val_str = str(val).strip()
+            
                 status = bool(val and val != 'False')
+                
                 symbol, cls = ('✓', 'pass') if status else ('✗', 'fail')
                 f.write(f"<td class='center {cls}'>{symbol}</td>")
             f.write("</tr>\n")
+            
         f.write("</table></body></html>")
     return filename
 
@@ -120,56 +138,76 @@ def export_to_pdf(data, columns, header_row):
     except ImportError:
         return "Error: fpdf2 library missing. Run 'pip install fpdf2'"
 
+    # 1. Organize the sort sequences securely
+    ordered_columns = [col for col in PREFERRED_ORDER if col in columns]
+    
     # Extract just the filename /path/to/targets.csv'
     base_name = os.path.basename(sys.argv[1])
     # Strip the extension
     name_without_ext = os.path.splitext(base_name)[0]
     filename = os.path.join(REPORTS_DIR, f"{name_without_ext}.pdf")
     os.makedirs(REPORTS_DIR, exist_ok=True)
+    
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page(orientation="L")
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 10, "SMTP Security Status Report", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="L")
     pdf.ln(4)
 
+    # 2. Re-calculate cell widths based on the ordered subset size
     usable_width = 275
     max_domain_chars = max(max(len(item.get('domain', '')) for item in data), 12)
     domain_width = (max_domain_chars * 2.1) + 6
-    if domain_width > 100: domain_width = 100
+    if domain_width > 100: 
+        domain_width = 100
 
     remaining_width = usable_width - domain_width
-    status_col_width = remaining_width / len(columns)
-    pdf_widths = {col: status_col_width for col in columns}
+    status_col_width = remaining_width / len(ordered_columns)  # Calculated from ordered list
+    pdf_widths = {col: status_col_width for col in ordered_columns}
     pdf_widths['Domain'] = domain_width
 
+    # 3. Render the table headers using the sorted order
     pdf.set_font("Helvetica", "B", 8)
     start_y = pdf.get_y()
     max_header_height = 8
-    for col in header_row:
+    
+    # Render Domain header first
+    pdf.multi_cell(pdf_widths['Domain'], max_header_height, "Domain", border=1, align="L", new_x=XPos.RIGHT, new_y=YPos.TOP)
+    
+    # Render the rest of the security checks in your preferred order
+    for col in ordered_columns:
         pdf.multi_cell(pdf_widths[col], max_header_height, col, border=1, align="C", new_x=XPos.RIGHT, new_y=YPos.TOP)
+        
     pdf.set_font("Helvetica", "", 8)
     pdf.set_y(start_y + max_header_height)
     pdf.cell(0, 0, "", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
+    # 4. Render data matching the exact header sequence order
     for item in data:
         domain_text = f"  {item.get('domain', '')}"
         pdf.cell(pdf_widths['Domain'], 7, domain_text, border=1, align="L")
-        for key in columns:
-            value = item.get(key, '')
-            status = bool(value and value != 'False')
+        
+        for key in ordered_columns:
+            val_str = str(item.get(key, '')).strip()
+            
+            # Robust status validation check (including null MX fix)
+            is_null_mx = val_str == '0 .' or val_str == '.'
+            status = bool(val_str) and val_str.lower() not in ['false', ''] and not is_null_mx
+            
             if status:
-                pdf.set_text_color(46, 204, 113)
+                pdf.set_text_color(46, 204, 113)  # Green
                 symbol = "Y"
             else:
-                pdf.set_text_color(231, 76, 60)
+                pdf.set_text_color(231, 76, 60)   # Red
                 symbol = "X"
+                
             pdf.cell(pdf_widths[key], 7, symbol, border=1, align="C")
-            pdf.set_text_color(0, 0, 0)
+            pdf.set_text_color(0, 0, 0)  # Reset to black text
+            
         pdf.cell(0, 7, "", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        
     pdf.output(filename)
     return filename
-
-import datetime
 
 def export_to_markdown(data, columns, header_row):
     # Extract just the filename /path/to/targets.csv'
@@ -178,6 +216,9 @@ def export_to_markdown(data, columns, header_row):
     name_without_ext = os.path.splitext(base_name)[0]
     filename = os.path.join(REPORTS_DIR, f"{name_without_ext}.md")
     os.makedirs(REPORTS_DIR, exist_ok=True)
+    
+    # 1. Organize the sort sequences securely
+    ordered_columns = [col for col in PREFERRED_ORDER if col in columns]
     
     # Capture the exact current timestamp in ISO 8601 format with UTC 'Z' marker
     current_timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -189,25 +230,29 @@ def export_to_markdown(data, columns, header_row):
         f.write(f"date: {current_timestamp}\n")
         f.write("draft: false\n")
         f.write("---\n\n")
-        f.write("## SMTP security settings for scanned domains\n")
+        f.write("## SMTP security settings for scanned domains\n\n")
 
-        # Render Markdown Table Headers
-        f.write("| " + " | ".join(header_row) + " |\n")
+        # 2. FIXED: Render Markdown Table Headers matching the ordered sequence
+        f.write("| Domain | " + " | ".join(ordered_columns) + " |\n")
         
-        # Render Markdown Separator alignment row
-        separator_row = ["| :--- "] + [" :---: " for _ in columns]
+        # 3. FIXED: Render Markdown Separator row matching the exact column count
+        separator_row = ["| :--- "] + [" :---: " for _ in ordered_columns]
         f.write("|".join(separator_row) + "|\n")
         
-        # Render Markdown Data Rows (Explicit loop verification)
+        # Render Markdown Data Rows
         for item in data:
             row_cells = []
             # Append the current domain text safely
             row_cells.append(item.get('domain', ''))
             
-            for key in columns:
+            for key in ordered_columns:
                 val = item.get(key, '')
                 val_str = str(val).strip()
-                status = bool(val and val != 'False')
+                
+                # 4. FIXED: Robust status validation logic (including null MX fix)
+                is_null_mx = val_str == '0 .' or val_str == '.'
+                status = bool(val_str) and val_str.lower() not in ['false', ''] and not is_null_mx
+                
                 row_cells.append("✓" if status else "✗")
                 
             # Write out this complete domain row before moving to the next one
@@ -239,6 +284,14 @@ def display_tui(data, stdscr):
     # Initialize scrolling variables
     current_scroll_row = 0
     stdscr.keypad(True) # Required to capture Up/Down arrow keys correctly
+    
+    # ORGANIZE THE SORT SEQUENCES SECURELY
+    ordered_columns = [col for col in PREFERRED_ORDER if col in columns]
+    # Build the display header explicitly to follow the same order
+    tui_headers = ['Domain'] + ordered_columns
+    
+    status_msg = ""
+    status_attr = curses.A_NORMAL
 
     while True:
         stdscr.clear()
@@ -249,14 +302,13 @@ def display_tui(data, stdscr):
         menu_str = " [Q] Quit   [I] Field Info   [H] Export HTML   [P] Export PDF   [M] Export Markdown"
         stdscr.addstr(0, 0, menu_str[:max_x], curses.A_REVERSE)
 
-        # Format and print Data Headers
-        formatted_header = " | ".join(f"{col:<{column_widths[col]}}" for col in header_row)
+        # FIXED: Render headers using the ordered sequence 'tui_headers'
+        formatted_header = " | ".join(f"{col:<{column_widths[col]}}" for col in tui_headers)
         stdscr.addstr(2, 0, formatted_header[:max_x], curses.A_BOLD)
 
         # Calculate workspace dimensions
         header_height = 3
-        # Max rows available on screen for data items
-        visible_data_rows = max_y - header_height - 1
+        visible_data_rows = max_y - header_height - 2 # Keep room for tracking indicators and status row
 
         # Slice the dataset to fit within the current window offset viewport
         visible_items = data[current_scroll_row : current_scroll_row + visible_data_rows]
@@ -264,14 +316,15 @@ def display_tui(data, stdscr):
         # Format and print the visible Data Rows
         row = header_height
         for item in visible_items:
-            if row >= max_y - 1:
+            if row >= max_y - 2:
                 break
 
             domain_val = item.get('domain', '')
             stdscr.addstr(row, 0, f"{domain_val:<{column_widths['Domain']}}")
             current_x = column_widths['Domain']
 
-            for key in columns:
+            # 3. Render data matching the exact header sequence order
+            for key in ordered_columns:
                 if current_x + 3 >= max_x:
                     break
                 stdscr.addstr(row, current_x, " | ")
@@ -296,30 +349,40 @@ def display_tui(data, stdscr):
                 current_x += column_widths[key]
             row += 1
 
-        # Safe scrolling indicator bar (Using row index 1 to completely avoid the bottom-right crash zone)
+        # Safe scrolling indicator bar (Moved up securely to max_y - 2)
         if len(data) > visible_data_rows and visible_data_rows > 0:
             indicator = f"Showing rows {current_scroll_row + 1}-{min(current_scroll_row + visible_data_rows, len(data))} of {len(data)} (Use arrows/j/k to scroll)"
-            stdscr.addstr(1, 0, indicator[:max_x], curses.A_DIM)
+            stdscr.addstr(max_y - 2, 0, indicator[:max_x], curses.A_DIM)
             
-        # 5. Interactive Navigation Input Listener
+        # 4. PERSISTENT NOTIFICATION BAR (Writes cleanly to max_y - 1)
+        if status_msg:
+            stdscr.addstr(max_y - 1, 0, status_msg[:max_x], status_attr)
+        else:
+            stdscr.addstr(max_y - 1, 0, " " * (max_x - 1))
+            
+        # Interactive Navigation Input Listener
         ch = stdscr.getch()
         
+        # Reset dynamic text alerts if navigation occurs
+        if ch in (curses.KEY_DOWN, curses.KEY_UP, ord('j'), ord('J'), ord('k'), ord('K')):
+            status_msg = ""
+
         if ch in (ord('q'), ord('Q')):
             break
         elif ch in (ord('i'), ord('I')):
             show_info_screen(stdscr)
         elif ch in (ord('h'), ord('H')):
-            outfile = export_to_html(data, columns, header_row)
-            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}!  Press any key to continue...", curses.A_BLINK)
-            stdscr.getch()
+            outfile = export_to_html(data, columns, header_row) # Pass csv_file_path here if updated downstream
+            status_msg = f"✓ Export Successful: Saved to {outfile}!"
+            status_attr = curses.A_BOLD | curses.color_pair(2)
         elif ch in (ord('p'), ord('P')):
             outfile = export_to_pdf(data, columns, header_row)
-            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}!  Press any key to continue...", curses.A_BLINK)
-            stdscr.getch()
+            status_msg = f"✓ Export Successful: Saved to {outfile}!"
+            status_attr = curses.A_BOLD | curses.color_pair(2)
         elif ch in (ord('m'), ord('M')):
             outfile = export_to_markdown(data, columns, header_row)
-            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}! Press any key to continue...", curses.A_BLINK)
-            stdscr.getch()
+            status_msg = f"✓ Export Successful: Saved to {outfile}!"
+            status_attr = curses.A_BOLD | curses.color_pair(2)
             
         # Scroll controls: Arrow keys or Vim keybindings (j=down, k=up)
         elif ch in (curses.KEY_DOWN, ord('j'), ord('J')):
