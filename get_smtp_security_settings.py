@@ -1,5 +1,6 @@
 import requests
 import dns.resolver
+import dns.flags
 import csv
 import sys
 
@@ -27,22 +28,28 @@ def get_mta_sts_txt(domain):
 # Function to check if a given domain is DNSSEC signed by the specified nameserver
 def IsDNSSEC_signed(domain, nameserver):
     resolver = dns.resolver.Resolver()
-    # Ensure nameserver is a list, as resolver.nameservers expects an iterable
     resolver.nameservers = nameserver if isinstance(nameserver, list) else [nameserver]
-    resolver.lifetime = 2.0  # Set a timeout so it doesn't hang indefinitely
+    resolver.lifetime = 3.0  # Bumped slightly to prevent false negatives on slow networks
+    
+    # CRITICAL: Tell the resolver to request DNSSEC data (sets the DO bit)
+    resolver.use_edns(0, ednsflags=dns.flags.DO)
+    resolver.want_dnssec = True
     
     try:
         # Resolve the DNSKEY records
         answers = resolver.resolve(domain, 'DNSKEY')
         
-        # Check if any of the returned records are Zone Signing Keys (256) or Key Signing Keys (257)
-        has_dnskey = any(rr.flags in (256, 257) for rr in answers)
-        
-        return has_dnskey
-
-    except dns.exception.DNSException:
-        # Catches Timeout, NXDOMAIN, NoAnswer, NoNameservers, etc.
+        # Ensure we actually got DNSKEY records back
+        if answers:
+            # Check for 256 (ZSK) or 257 (KSK)
+            has_dnskey = any(rr.flags in (256, 257) for rr in answers)
+            return has_dnskey
+            
+    except dns.exception.DNSException as e:
+        # Debugging tip: print(f"DNS Error: {e}") 
         return False
+        
+    return False
 
 # Function to retrieve TLSA records for a given domain and nameserver
 def get_tlsa_records(domain, nameserver):
@@ -79,6 +86,7 @@ def get_smtp_records(domains, output_file, local_nameserver):
             try:
                 dnssec = False
                 dnssec = IsDNSSEC_signed(domain, local_nameserver)  # Check if the given domain is DNSSEC signed
+                print(dnssec)
                 mx_records = dns.resolver.resolve(domain, 'MX')  # Retrieve MX records for the given domain
                 caA = get_records(domain, 'CAA')  # Retrieve CA/A record             try:
                 #dnssec = IsDNSSEC_signed(domain, local_nameserver)  # Check if the given domain is DNSSEC signed
@@ -119,9 +127,11 @@ def get_smtp_records(domains, output_file, local_nameserver):
                         'mta_sts_txt': mta_sts_txt
                     })
             except dns.resolver.NoAnswer:  # No answer found during resolution
-                writer.writerow({'domain': domain, 'dnssec': 'No', 'mx': 'No MX records found', 'caA': get_records(domain, 'CAA'), 'spf': 'False', 'dmarc': 'False', 'mta-sts': 'False', 'ipv4-mta-sts': 'False', 'ipv6-mta-sts': 'False', 'mta-report': 'False', 'tlsa': 'False', 'mta_sts_txt': 'False'})
+                pass
+                #writer.writerow({'domain': domain, 'dnssec': 'False', 'mx': 'No MX records found', 'caA': get_records(domain, 'CAA'), 'spf': 'False', 'dmarc': 'False', 'mta-sts': 'False', 'ipv4-mta-sts': 'False', 'ipv6-mta-sts': 'False', 'mta-report': 'False', 'tlsa': 'False', 'mta_sts_txt': 'False'})
             except dns.resolver.NXDOMAIN:  # Domain does not exist
-                writer.writerow({'domain': domain, 'dnssec': 'No', 'mx': 'No MX records found', 'caA': get_records(domain, 'CAA'), 'spf': 'False', 'dmarc': 'False', 'mta-sts': 'False', 'ipv4-mta-sts': 'False', 'ipv6-mta-sts': 'False', 'mta-report': 'False', 'tlsa': 'False', 'mta_sts_txt': 'False'})
+                pass
+                #writer.writerow({'domain': domain, 'dnssec': 'False', 'mx': 'No MX records found', 'caA': get_records(domain, 'CAA'), 'spf': 'False', 'dmarc': 'False', 'mta-sts': 'False', 'ipv4-mta-sts': 'False', 'ipv6-mta-sts': 'False', 'mta-report': 'False', 'tlsa': 'False', 'mta_sts_txt': 'False'})
         sys.stdout.write(f"\r\n\nFinished retrieving data for {total_domains} Domains...\n\n")
 
 # Call the main function with command-line arguments
