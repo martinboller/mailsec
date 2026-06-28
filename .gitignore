@@ -2,5 +2,8 @@
 .~*
 *.pdf
 *.html
-report.md
+*.md
 *.log
+Reports/
+Input/
+Output/

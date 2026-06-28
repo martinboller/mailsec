@@ -7,6 +7,7 @@ import os
 script_dir = os.path.dirname(os.path.abspath(__file__))
 log_path = os.path.join(script_dir, "dns_debug.log")
 
+REPORTS_DIR = "Reports"
 # Function to read CSV and return data
 def read_csv(file_path):
     try:
@@ -80,7 +81,12 @@ def show_info_screen(stdscr):
 
 # --- Export Functions ---
 def export_to_html(data, columns, header_row):
-    filename = "report.html"
+    # Extract just the filename /path/to/targets.csv'
+    base_name = os.path.basename(sys.argv[1])
+    # Strip the extension
+    name_without_ext = os.path.splitext(base_name)[0]
+    filename = os.path.join(REPORTS_DIR, f"{name_without_ext}.html")
+    os.makedirs(REPORTS_DIR, exist_ok=True)
     with open(filename, "w", encoding="utf-8") as f:
         f.write("""<!DOCTYPE html><html><head><style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f9f9f9; }
@@ -114,7 +120,12 @@ def export_to_pdf(data, columns, header_row):
     except ImportError:
         return "Error: fpdf2 library missing. Run 'pip install fpdf2'"
 
-    filename = "report.pdf"
+    # Extract just the filename /path/to/targets.csv'
+    base_name = os.path.basename(sys.argv[1])
+    # Strip the extension
+    name_without_ext = os.path.splitext(base_name)[0]
+    filename = os.path.join(REPORTS_DIR, f"{name_without_ext}.pdf")
+    os.makedirs(REPORTS_DIR, exist_ok=True)
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page(orientation="L")
     pdf.set_font("Helvetica", "B", 14)
@@ -161,7 +172,12 @@ def export_to_pdf(data, columns, header_row):
 import datetime
 
 def export_to_markdown(data, columns, header_row):
-    filename = "report.md"
+    # Extract just the filename /path/to/targets.csv'
+    base_name = os.path.basename(sys.argv[1])
+    # Strip the extension
+    name_without_ext = os.path.splitext(base_name)[0]
+    filename = os.path.join(REPORTS_DIR, f"{name_without_ext}.md")
+    os.makedirs(REPORTS_DIR, exist_ok=True)
     
     # Capture the exact current timestamp in ISO 8601 format with UTC 'Z' marker
     current_timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -241,7 +257,7 @@ def display_tui(data, stdscr):
         # Calculate workspace dimensions
         header_height = 3
         # Max rows available on screen for data items
-        visible_data_rows = max_y - header_height - 1 
+        visible_data_rows = max_y - header_height - 1
 
         # Slice the dataset to fit within the current window offset viewport
         visible_items = data[current_scroll_row : current_scroll_row + visible_data_rows]
@@ -295,15 +311,15 @@ def display_tui(data, stdscr):
             show_info_screen(stdscr)
         elif ch in (ord('h'), ord('H')):
             outfile = export_to_html(data, columns, header_row)
-            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}! Key...", curses.A_BLINK)
+            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}!  Press any key to continue...", curses.A_BLINK)
             stdscr.getch()
         elif ch in (ord('p'), ord('P')):
             outfile = export_to_pdf(data, columns, header_row)
-            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}! Key...", curses.A_BLINK)
+            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}!  Press any key to continue...", curses.A_BLINK)
             stdscr.getch()
         elif ch in (ord('m'), ord('M')):
             outfile = export_to_markdown(data, columns, header_row)
-            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}! Key...", curses.A_BLINK)
+            stdscr.addstr(max_y - 1, 0, f"Saved to {outfile}! Press any key to continue...", curses.A_BLINK)
             stdscr.getch()
             
         # Scroll controls: Arrow keys or Vim keybindings (j=down, k=up)
