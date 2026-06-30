@@ -155,16 +155,15 @@ def get_smtp_records(domains, output_file):
 
                 # Assuming spf_records contains the raw dnspython TXT record objects
                 for record in spf_records:  
-                    # 1. Strip the outer quotes that dnspython wraps around the whole result
+                    # Strip the outer quotes that dnspython wraps around the whole result
                     cleaned_record = record.strip().strip('"').strip("'")
 
-                    # 2. Fix dnspython's multi-string formatting (" " artifacts)
-                    # This turns '...67.18" "6...' into '...67.186...'
+                    # Fix dnspython's multi-string formatting (" " artifacts)
                     cleaned_record = cleaned_record.replace('" "', '')
 
-                    # 3. Standardize casing for the prefix check
+                    # Lower case everything for the prefix check
                     if cleaned_record.lower().startswith('v=spf'):
-                        spf = cleaned_record  # Grab the fully repaired string
+                        spf = cleaned_record  # Grab the fully cleaned string
                         break                 # Stop iterating when spf record found
                         
                 if mta_sts and mta_sts != 'False':
