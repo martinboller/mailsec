@@ -274,7 +274,10 @@ def export_to_markdown(data, columns, header_row):
         f.write("| **mta-report** | `TXT` Record (`_smtp._tls.domain`) | Text String | **TLS Reporting (TLS-RPT):** Configures an email address or URI endpoint where sending mail servers can transmit daily diagnostic reports about TLS connection successes or failures. |\n")
         f.write("| **tlsa** | `TLSA` Records (Ports 25, 465, 587, etc.) | List of Hex Fingerprints | **DANE Protocol:** Pins a specific certificate public key directly to your DNS layer. This prevents Man-in-the-Middle (MitM) attacks by guaranteeing the exact certificate the mail server must use. |\n")
         f.write("| **mta_sts_txt** | HTTPS Web Fetch (`/.well-known/mta-sts.txt`) | Raw File Contents | **MTA-STS Policy File:** A plaintext file hosted via strict HTTPS that defines your encryption constraints (`enforce`, `testing`, or `none`), specifies valid MX hosts, and sets a max age cache parameter. |\n")
-            
+        
+        f.write("\n\n## Tools used for analysis\n\n")
+        f.write("\n\nhttps://github.com/martinboller/mailsec\n\n")
+
     return filename
 
 # --- Core TUI Layout ---
